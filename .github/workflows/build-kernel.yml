@@ -1,0 +1,124 @@
+name: Build surya kernel
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - ReSukiSU
+    tags:
+      - "v*"
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+  pull_request:
+    branches:
+      - ReSukiSU
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kernel-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build AnyKernel3 ZIP
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+
+    env:
+      DEBIAN_FRONTEND: noninteractive
+      KBUILD_BUILD_USER: github-actions
+      KBUILD_BUILD_HOST: github
+      CLEAN: "1"
+
+    steps:
+      - name: Checkout kernel and submodules
+        uses: actions/checkout@v7
+        with:
+          submodules: recursive
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bc \
+            binutils-aarch64-linux-gnu \
+            binutils-arm-linux-gnueabi \
+            bison \
+            build-essential \
+            ca-certificates \
+            cpio \
+            curl \
+            file \
+            flex \
+            gcc-aarch64-linux-gnu \
+            gcc-arm-linux-gnueabi \
+            git \
+            libelf-dev \
+            libncurses-dev \
+            libssl-dev \
+            python3 \
+            rsync \
+            unzip \
+            xz-utils \
+            zip \
+            zstd
+
+      - name: Restore downloaded build tools
+        uses: actions/cache@v6
+        with:
+          path: toolchains
+          key: >-
+            kernel-tools-${{ runner.os }}-${{ runner.arch }}-${{
+            hashFiles('build.sh') }}
+          restore-keys: |
+            kernel-tools-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Build kernel
+        shell: bash
+        run: |
+          chmod +x build.sh
+          ./build.sh
+
+      - name: Locate AnyKernel ZIP
+        id: output
+        shell: bash
+        run: |
+          shopt -s nullglob
+          files=(surya-lineage22-resukisu-*.zip)
+
+          if (( ${#files[@]} != 1 )); then
+            printf 'Expected exactly one kernel ZIP, found %d\n' "${#files[@]}" >&2
+            printf '%s\n' "${files[@]:-<none>}" >&2
+            exit 1
+          fi
+
+          printf 'zip_path=%s\n' "${files[0]}" >> "$GITHUB_OUTPUT"
+          printf 'zip_name=%s\n' "${files[0]%.zip}" >> "$GITHUB_OUTPUT"
+
+          sha256sum "${files[0]}"
+
+      - name: Upload flashable ZIP
+        uses: actions/upload-artifact@v7
+        with:
+          path: ${{ steps.output.outputs.zip_path }}
+          archive: false
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Upload build log on failure
+        if: failure() && hashFiles('build.log') != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: build-log-${{ github.run_number }}-${{ github.run_attempt }}
+          path: build.log
+          retention-days: 14
+          compression-level: 9
+          if-no-files-found: ignore
