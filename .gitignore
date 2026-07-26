@@ -129,3 +129,9 @@ kernel/configs/android-*.cfg
 #Ignoring Android.bp link file
 #
 Android.bp
+
+# kernel builds
+*.zip
+build.log
+out/
+toolchains/
